@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import sys
 
+sys.path.append('.')
 import argparse
 import datetime
 import os
@@ -14,10 +16,11 @@ from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
 from tianshou.exploration import GaussianNoise
 from tianshou.policy import TD3Policy
-from tianshou.trainer import offpolicy_trainer
 from tianshou.utils import TensorboardLogger
 from tianshou.utils.net.common import Net
 from tianshou.utils.net.continuous import Actor, Critic
+
+from trainer import offpolicy_trainer
 
 
 def get_args():
@@ -148,8 +151,8 @@ def test_td3(args=get_args()):
     writer.add_text("args", str(args))
     logger = TensorboardLogger(writer)
 
-    def save_fn(policy):
-        torch.save(policy.state_dict(), os.path.join(log_path, 'policy.pth'))
+    def save_fn(policy, info=''):
+        torch.save(policy.state_dict(), os.path.join(log_path, 'policy_{}.pth'.format(info)))
 
     if not args.watch:
         # trainer
