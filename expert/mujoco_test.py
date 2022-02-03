@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 import sys
+import time
 
 sys.path.append('.')
 import argparse
 import datetime
 import os
 import pprint
-import pybulletgym
+
 import gym
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer
+from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer, Batch
 from tianshou.env import SubprocVectorEnv
 from tianshou.exploration import GaussianNoise
 from tianshou.policy import TD3Policy
@@ -20,12 +21,11 @@ from tianshou.utils import TensorboardLogger
 from tianshou.utils.net.common import Net
 from tianshou.utils.net.continuous import Actor, Critic
 
-from trainer import offpolicy_trainer
-
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', type=str, default='Ant-v3')
+    parser.add_argument('--tag', type=str, default='gold')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--buffer-size', type=int, default=1000000)
     parser.add_argument('--hidden-sizes', type=int, nargs='*', default=[256, 256])
@@ -73,21 +73,7 @@ def test_td3(args=get_args()):
     print("Actions shape:", args.action_shape)
     print("Action range:", np.min(env.action_space.low), np.max(env.action_space.high))
     # train_envs = gym.make(args.task)
-    if args.training_num > 1:
-        train_envs = SubprocVectorEnv(
-            [lambda: gym.make(args.task) for _ in range(args.training_num)]
-        )
-    else:
-        train_envs = gym.make(args.task)
-    # test_envs = gym.make(args.task)
-    test_envs = SubprocVectorEnv(
-        [lambda: gym.make(args.task) for _ in range(args.test_num)]
-    )
-    # seed
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    train_envs.seed(args.seed)
-    test_envs.seed(args.seed)
+
     # model
     net_a = Net(args.state_shape, hidden_sizes=args.hidden_sizes, device=args.device)
     actor = Actor(
@@ -130,54 +116,62 @@ def test_td3(args=get_args()):
         action_space=env.action_space
     )
 
-    # load a previous policy
-    if args.resume_path:
-        policy.load_state_dict(torch.load(args.resume_path, map_location=args.device))
-        print("Loaded agent from: ", args.resume_path)
-
-    # collector
-    if args.training_num > 1:
-        buffer = VectorReplayBuffer(args.buffer_size, len(train_envs))
-    else:
-        buffer = ReplayBuffer(args.buffer_size)
-    train_collector = Collector(policy, train_envs, buffer, exploration_noise=True)
-    test_collector = Collector(policy, test_envs)
-    train_collector.collect(n_step=args.start_timesteps, random=True)
-    # log
-    t0 = datetime.datetime.now().strftime("%m%d_%H%M%S")
-    log_file = f'seed_{args.seed}_{t0}-{args.task.replace("-", "_")}_td3'
-    log_path = os.path.join(args.logdir, args.task, 'td3', log_file)
-    writer = SummaryWriter(log_path)
-    writer.add_text("args", str(args))
-    logger = TensorboardLogger(writer)
-
-    def save_fn(policy, info=''):
-        torch.save(policy.state_dict(), os.path.join(log_path, 'policy_{}.pth'.format(info)))
-
     if not args.watch:
-        # trainer
-        result = offpolicy_trainer(
-            policy,
-            train_collector,
-            test_collector,
-            args.epoch,
-            args.step_per_epoch,
-            args.step_per_collect,
-            args.test_num,
-            args.batch_size,
-            save_fn=save_fn,
-            logger=logger,
-            update_per_step=args.update_per_step,
-            test_in_train=False
-        )
-        pprint.pprint(result)
-
+        pass
+    else:
+        policy.load_state_dict(torch.load(
+            os.path.join('policy', '{}_{}.pth'.format(args.task, args.tag))))
     # Let's watch its performance!
     policy.eval()
-    test_envs.seed(args.seed)
-    test_collector.reset()
-    result = test_collector.collect(n_episode=args.test_num, render=args.render)
-    print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
+
+    test_episode = 2000
+    max_step = 1000
+    state_array = np.zeros((test_episode, max_step, np.prod(args.state_shape)))
+    action_array = np.zeros((test_episode, max_step, np.prod(args.action_shape)))
+    reward_array = np.zeros((test_episode, max_step))
+
+    returns = []
+    total_observations = []
+    total_actions = []
+    with torch.no_grad():
+        for i_episode in range(test_episode):
+            obs = env.reset()
+            observations = []
+            actions = []
+            done = False
+            totalr = 0
+            steps = 0
+            while not done:
+                result = policy(Batch({'obs': obs[np.newaxis, :], 'info': ''}))
+                action = result.act.cpu().numpy()
+                action = action.reshape(-1)
+
+                state_array[i_episode,  steps] = obs
+                action_array[i_episode, steps] = action
+
+                # observations.append(obs)
+                # actions.append(action)
+                obs, r, done, _ = env.step(action)
+                # time.sleep(0.01)
+                # env.render()
+                reward_array[i_episode, steps] = r
+                totalr += r
+                steps += 1
+                if steps >= max_step:
+                    break
+            returns.append(totalr)
+            total_observations.append(observations)
+            total_actions.append(actions)
+            print('{} episode collected, total reward: {}'.format(i_episode, 0))
+    np.save('data/{}_{}_state_array.npy'.format(args.task, args.tag), state_array)
+    np.save('data/{}_{}_action_array.npy'.format(args.task, args.tag), action_array)
+    np.save('data/{}_{}_reward_array.npy'.format(args.task, args.tag), reward_array)
+    # avrg_mean, avrg_std = np.mean(returns), np.std(returns)
+    # observations = np.array(observations).astype(np.float32)
+    # actions = np.array(actions).astype(np.float32)
+    # print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
+
+    print(f'Finished')
 
 
 if __name__ == '__main__':
