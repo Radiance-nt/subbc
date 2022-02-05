@@ -6,25 +6,6 @@ from torch.autograd import Variable
 import torch.nn.init as init
 
 
-class Net(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super(Net, self).__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(in_dim, 128),
-            nn.ReLU(True),
-            nn.Linear(128, 128),
-            nn.ReLU(True),
-            nn.Linear(128, 64),
-            nn.ReLU(True),
-            nn.Linear(64, 64),
-            nn.ReLU(True),
-            nn.Linear(64, out_dim),
-        )
-
-    def forward(self, obs):
-        return self.mlp(obs)
-
-
 def to_var(x, requires_grad=True):
     if torch.cuda.is_available():
         x = x.cuda()
@@ -242,7 +223,8 @@ class BasicBlock(MetaModule):
                 For CIFAR10 ResNet paper uses option A.
                 """
                 self.shortcut = LambdaLayer(lambda x:
-                                            F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes//4, planes//4), "constant", 0))
+                                            F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes // 4, planes // 4), "constant",
+                                                  0))
             elif option == 'B':
                 self.shortcut = nn.Sequential(
                     MetaConv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
@@ -272,7 +254,7 @@ class ResNet32(MetaModule):
         self.apply(_weights_init)
 
     def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
+        strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
             layers.append(block(self.in_planes, planes, stride))
@@ -289,7 +271,6 @@ class ResNet32(MetaModule):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
-
 
 
 class VNet(MetaModule):
@@ -309,8 +290,20 @@ class VNet(MetaModule):
         return F.sigmoid(out)
 
 
+class Net(MetaModule):
+    def __init__(self, in_dim, out_dim):
+        super(Net, self).__init__()
+        self.mlp = nn.Sequential(
+            MetaLinear(in_dim, 128),
+            nn.ReLU(True),
+            MetaLinear(128, 128),
+            nn.ReLU(True),
+            MetaLinear(128, 64),
+            nn.ReLU(True),
+            MetaLinear(64, 64),
+            nn.ReLU(True),
+            MetaLinear(64, out_dim),
+        )
 
-
-
-
-
+    def forward(self, obs):
+        return self.mlp(obs)

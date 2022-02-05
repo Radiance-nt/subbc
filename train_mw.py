@@ -39,7 +39,8 @@ def train(train_loader, train_meta_loader, model, vnet, optimizer_model, optimiz
         l_f_meta = torch.sum(cost_v * v_lambda) / len(cost_v)
         meta_model.zero_grad()
         grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
-        meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100)))  # For ResNet32
+        # meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100)))  # For ResNet32
+        meta_lr = args.lr  # For ResNet32
         meta_model.update_params(lr_inner=meta_lr, source_params=grads)
         del grads
 
@@ -104,7 +105,6 @@ def train_BC(agent, dataloader, args):
 
 
 def valid_BC(agent, dataloader, args):
-    optimizer = optim.Adam(agent.parameters(), lr=args.lr, weight_decay=args.l2)
     loss_fn = nn.MSELoss()
     loss_sum = 0
     with torch.no_grad():
@@ -179,7 +179,7 @@ def main(args):
         return train_dataset, test_dataset
 
     train_meta_dataset, test_dataset = load_data(args.sample, 'gold')
-    train_dataset, _ = load_data(args.sample * 2, 'silver')
+    train_dataset, _ = load_data(args.sample * 5, 'silver')
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     train_meta_loader = DataLoader(train_meta_dataset, batch_size=args.batch_size, shuffle=True)
@@ -187,10 +187,9 @@ def main(args):
     # a = np.random.randint(1 + expert_obs.shape[0] - number_expert_trajectories)
 
     agent = Net(state_space_size, action_space_size).to(args.device)
-    vnet = VNet(1, 100, 1).to(args.device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.lr, weight_decay=args.l2)
-    optimizer_vnet = optim.Adam(vnet.parameters(), 1e-3,
-                                weight_decay=1e-4)
+    vnet = VNet(1, 64, 1).to(args.device)
+    optimizer = optim.Adam(agent.params(), lr=args.lr, weight_decay=args.l2)
+    optimizer_vnet = optim.Adam(vnet.params(), 1e-3, weight_decay=1e-4)
     writer = SummaryWriter(os.path.join(
         args.log_path, args.task, 'hybrid' + '_' + str(args.sample)))
     for epoch in range(args.epoch):
