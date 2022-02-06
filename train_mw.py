@@ -32,15 +32,14 @@ def train(train_loader, train_meta_loader, model, vnet, optimizer_model, optimiz
         meta_model = Net(cfg['state_space_size'], cfg['action_space_size']).to(args.device)
         meta_model.load_state_dict(model.state_dict())
         outputs = meta_model(inputs)
-
         cost = loss_fn(outputs, targets, reduce=False)
-        cost_v = torch.reshape(cost, (len(cost), -1)).mean(1, True)
+        # cost_v = torch.reshape(cost, (len(cost), -1)).mean(1, True)
+        cost_v = cost
         v_lambda = vnet(cost_v.data)
         l_f_meta = torch.sum(cost_v * v_lambda) / len(cost_v)
         meta_model.zero_grad()
         grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
-        # meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100)))  # For ResNet32
-        meta_lr = args.lr  # For ResNet32
+        meta_lr = args.lr * (0.1 ** int(epoch / 20))
         meta_model.update_params(lr_inner=meta_lr, source_params=grads)
         del grads
 
@@ -60,7 +59,8 @@ def train(train_loader, train_meta_loader, model, vnet, optimizer_model, optimiz
 
         outputs = model(inputs)
         cost_w = loss_fn(outputs, targets, reduce=False)
-        cost_v = torch.reshape(cost_w, (len(cost_w), -1)).mean(1, True)
+        # cost_v = torch.reshape(cost_w, (len(cost_w), -1)).mean(1, True)
+        cost_v = cost_w
         # prec_train = accuracy(outputs.data, targets.data, topk=(1,))[0]
 
         with torch.no_grad():
@@ -187,12 +187,15 @@ def main(args):
     # a = np.random.randint(1 + expert_obs.shape[0] - number_expert_trajectories)
 
     agent = Net(state_space_size, action_space_size).to(args.device)
-    vnet = VNet(1, 64, 1).to(args.device)
+    vnet = VNet(8, 64, 8).to(args.device)
     optimizer = optim.Adam(agent.params(), lr=args.lr, weight_decay=args.l2)
     optimizer_vnet = optim.Adam(vnet.params(), 1e-3, weight_decay=1e-4)
     writer = SummaryWriter(os.path.join(
-        args.log_path, args.task, 'hybrid' + '_' + str(args.sample)))
+        args.log_path, args.task, 'hybrid' + '_' + str(args.sample) + '_' + str(time.localtime()[3])+str(time.localtime()[4])))
     for epoch in range(args.epoch):
+        lr = args.lr * (0.1 ** int(epoch / 20))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
         cfg = {'epoch': epoch, 'action_space_size': action_space_size, 'state_space_size': state_space_size}
         train_loss, meta_loss = train(train_loader, train_meta_loader,
                                       agent, vnet, optimizer, optimizer_vnet, cfg)
@@ -218,10 +221,10 @@ if __name__ == '__main__':
     parser.add_argument('--sample', type=int, default=50)
 
     # Optimization options
-    parser.add_argument('--epoch', type=int, default=75)
+    parser.add_argument('--epoch', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--lr', type=float, default=0.0001)
-    parser.add_argument('--l2', type=float, default=0.0001)
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--l2', type=float, default=0.00001)
 
     parser.add_argument('--n_evaluator_episode', type=int, default=10)
     parser.add_argument('--max_steps', type=int, default=1000)
